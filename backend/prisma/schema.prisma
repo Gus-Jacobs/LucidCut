@@ -1,0 +1,65 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id        String   @id @default(cuid())
+  videoName String
+  status    String   @default("queued") // queued, processing, completed, failed
+  progress  Int      @default(0)
+  error     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  results   Result[]
+  feedback  Feedback[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Result {
+  id            String   @id @default(cuid())
+  jobId         String
+  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  type          String   // "swear" or "unsafe"
+  start         Float
+  end           Float
+  confidence    Float
+  maxConfidence Float
+  severity      String   // "hard" or "soft"
+  bbox          String?  // JSON string: [x, y, w, h]
+  
+  createdAt     DateTime @default(now())
+
+  @@index([jobId])
+  @@index([type])
+}
+
+model Feedback {
+  id            String   @id @default(cuid())
+  jobId         String
+  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  action        String   // "keep", "remove", "change_severity", "add"
+  resultId      String?  // For referencing specific results
+  notes         String?
+  
+  // For manual additions
+  startTime     Float?
+  endTime       Float?
+  detectionType String?  // "swear" or "unsafe"
+  
+  createdAt     DateTime @default(now())
+
+  @@index([jobId])
+}

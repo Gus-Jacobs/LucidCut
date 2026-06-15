@@ -1,0 +1,16 @@
+# Speech-to-text
+openai-whisper==20250625
+
+# NSFW region detection (beta) — per-body-part bounding boxes
+nudenet==3.4.2
+onnxruntime==1.19.2
+
+# Whole-frame NSFW classifier fallback
+transformers==4.57.6
+torch==2.8.0
+torchvision==0.23.0
+
+# Image / video frame handling
+opencv-python==4.13.0.92
+Pillow==11.3.0
+numpy==2.0.2

@@ -1,0 +1,30 @@
+AUTO-CLEANUP SYSTEM
+===================
+
+CLEANUP STRATEGY:
+1. Startup Cleanup: Removes files older than 24 hours when server starts
+2. Scheduled Cleanup: Runs every hour automatically
+3. Session Cleanup: Removes job files immediately after successful download
+
+FILES CLEANED:
+- /backend/uploads/*.mp4 (original uploaded videos)
+- /backend/outputs/*.mp4 (processed/edited videos)
+- /backend/outputs/*.json (detection results)
+
+CONFIGURATION:
+- MAX_FILE_AGE_MS = 24 * 60 * 60 * 1000 (24 hours)
+- Scheduled cleanup interval = 60 minutes
+
+CLEANUP FLOW:
+1. User uploads video → stored in uploads/
+2. ML processing completes → output stored in outputs/
+3. User downloads edited video → cleanup triggered
+4. Job input/output/results files removed (kept for feedback access)
+5. Or: 24-hour auto-cleanup removes any orphaned files
+
+BENEFITS:
+- No manual cleanup needed
+- Disk space automatically recovered
+- Old test files automatically removed
+- Session-based cleanup after downloads
+- Scheduled fallback cleanup every hour

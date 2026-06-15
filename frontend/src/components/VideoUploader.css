@@ -1,0 +1,191 @@
+/* Container that fills the screen below the global nav bar */
+.uploader-root {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 72px); /* Adjust 72px if your top nav is a different height */
+  width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.uploader-header {
+  padding: 32px 40px 16px 40px;
+  flex-shrink: 0;
+}
+
+.uploader-header h2 {
+  margin: 0;
+  font-size: 2.2em;
+  font-weight: 800;
+  background: linear-gradient(120deg, #ffffff 0%, #dbeafe 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.uploader-header p {
+  margin: 8px 0 0 0;
+  font-size: 1.1em;
+  color: #9fb0cc;
+}
+
+/* The magic grid: Fluid left area, fixed 420px right sidebar */
+.uploader-content {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 32px;
+  padding: 0 40px 24px 40px;
+  flex: 1;
+  min-height: 0; 
+  box-sizing: border-box;
+}
+
+/* Left: Dropzone */
+.uploader-left {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.dropzone {
+  flex: 1;
+  border: 2px dashed rgba(124, 58, 237, 0.3);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.005));
+  cursor: pointer;
+  transition: all 0.2s ease;
+  overflow: hidden;
+}
+
+.dropzone:hover:not(.has-preview) {
+  border-color: rgba(124, 58, 237, 0.6);
+  background: rgba(124, 58, 237, 0.05);
+}
+
+.dropzone.has-preview {
+  padding: 16px;
+  cursor: default;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.hidden-input {
+  display: none;
+}
+
+.drop-inner {
+  text-align: center;
+}
+
+.drop-title {
+  font-size: 1.4em;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+/* Video Preview Wrapper */
+.preview-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #020617;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.preview-wrapper video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.preview-remove {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: white;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: all 0.2s ease;
+  z-index: 10;
+}
+
+.preview-remove:hover {
+  background: rgba(239, 68, 68, 0.9);
+  transform: scale(1.05);
+}
+
+/* Right: Settings Sidebar */
+.uploader-right {
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  padding: 24px;
+  overflow-y: auto;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+/* Custom Scrollbar for Settings */
+.uploader-right::-webkit-scrollbar { width: 6px; }
+.uploader-right::-webkit-scrollbar-track { background: transparent; }
+.uploader-right::-webkit-scrollbar-thumb { background: rgba(124, 58, 237, 0.2); border-radius: 4px; }
+.uploader-right::-webkit-scrollbar-thumb:hover { background: rgba(124, 58, 237, 0.4); }
+
+/* Bottom Action Bar */
+.uploader-bottom {
+  padding: 24px 40px;
+  background: rgba(5, 10, 21, 0.5);
+  border-top: 1px solid rgba(124, 58, 237, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.uploader-buttons {
+  display: flex;
+  gap: 16px;
+}
+
+.uploader-buttons .btn {
+  min-width: 160px;
+}
+
+.uploader-backend-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+/* Responsive collapse for smaller screens */
+@media (max-width: 1000px) {
+  .uploader-content {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+  .uploader-left {
+    min-height: 400px; /* Keep a minimum height for dropzone on mobile */
+    flex: none;
+  }
+  .uploader-right {
+    overflow: visible;
+  }
+}
