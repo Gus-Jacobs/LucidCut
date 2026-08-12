@@ -1,0 +1,150 @@
+.donate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(3, 7, 18, 0.66);
+  backdrop-filter: blur(6px);
+  animation: donate-fade 200ms ease;
+}
+
+@keyframes donate-fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes donate-pop {
+  from { opacity: 0; transform: translateY(14px) scale(0.97) }
+  to   { opacity: 1; transform: none }
+}
+
+.donate-modal {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  padding: 58px 32px 24px;
+  border-radius: 20px;
+  text-align: center;
+  color: #e6eef8;
+  background: linear-gradient(160deg, #141834 0%, #0c1024 100%);
+  border: 1px solid rgba(124, 58, 237, 0.28);
+  box-shadow: 0 30px 80px rgba(3, 7, 18, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  animation: donate-pop 260ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.donate-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 34px;
+  height: 34px;
+  padding: 0;                 /* override global button padding so the X centers */
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #9fb0cc;
+  cursor: pointer;
+  transition: all 180ms ease;
+}
+.donate-close:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+
+.donate-badge {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  color: #fff;
+  background: linear-gradient(135deg, #ec4899, #7c3aed);
+  box-shadow: 0 12px 30px rgba(124, 58, 237, 0.45);
+}
+
+/* LucidCut brand mark in the top-left corner (like the app window's title-bar icon) */
+.donate-brand {
+  position: absolute;
+  top: 16px;
+  left: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #f1f8ff;
+  letter-spacing: 0.01em;
+}
+.donate-brand img {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  object-fit: contain;
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.45);
+}
+
+.donate-title {
+  margin: 0 0 14px;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  background: linear-gradient(120deg, #ffffff, #dbeafe);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.donate-body {
+  margin: 0 0 14px;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: #b9c6de;
+}
+.donate-body strong { color: #f1f8ff; }
+
+.donate-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.donate-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 13px 18px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.donate-btn.ghost {
+  background: transparent;
+  border: 1px solid rgba(159, 176, 204, 0.3);
+  color: #cdd8ec;
+}
+.donate-btn.ghost:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(159, 176, 204, 0.5); }
+
+.donate-btn.primary {
+  border: 0;
+  color: #fff;
+  background: linear-gradient(135deg, #ec4899, #7c3aed);
+  box-shadow: 0 10px 26px rgba(124, 58, 237, 0.45);
+}
+.donate-btn.primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 36px rgba(124, 58, 237, 0.55);
+}
+
+.donate-footnote {
+  margin-top: 18px;
+  font-size: 11px;
+  color: #6b7a96;
+}

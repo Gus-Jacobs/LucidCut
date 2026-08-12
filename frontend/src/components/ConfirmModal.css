@@ -1,0 +1,68 @@
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(3, 7, 18, 0.7);
+  backdrop-filter: blur(6px);
+  animation: confirm-fade 180ms ease;
+}
+@keyframes confirm-fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes confirm-pop {
+  from { opacity: 0; transform: translateY(12px) scale(0.97) }
+  to   { opacity: 1; transform: none }
+}
+
+.confirm-modal {
+  width: 100%;
+  max-width: 420px;
+  padding: 28px 28px 22px;
+  border-radius: 18px;
+  text-align: center;
+  color: #e6eef8;
+  background: linear-gradient(160deg, #161a38 0%, #0c1024 100%);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  box-shadow: 0 26px 70px rgba(3, 7, 18, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  animation: confirm-pop 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.confirm-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(135deg, #7c3aed, #3b82f6);
+  box-shadow: 0 10px 24px rgba(124, 58, 237, 0.4);
+}
+.confirm-icon.danger {
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
+  box-shadow: 0 10px 24px rgba(239, 68, 68, 0.4);
+}
+
+.confirm-title { margin: 0 0 10px; font-size: 20px; font-weight: 800; color: #f1f8ff; }
+.confirm-message { margin: 0; font-size: 14px; line-height: 1.6; color: #b9c6de; }
+.confirm-message strong { color: #f1f8ff; }
+
+.confirm-actions { display: flex; gap: 12px; margin-top: 22px; }
+.confirm-btn {
+  flex: 1;
+  padding: 12px 16px;
+  border-radius: 11px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.confirm-btn.ghost { background: transparent; border: 1px solid rgba(159, 176, 204, 0.3); color: #cdd8ec; }
+.confirm-btn.ghost:hover { background: rgba(255, 255, 255, 0.05); border-color: rgba(159, 176, 204, 0.5); }
+.confirm-btn.primary { border: 0; color: #fff; background: linear-gradient(135deg, #7c3aed, #3b82f6); box-shadow: 0 10px 24px rgba(124, 58, 237, 0.4); }
+.confirm-btn.primary:hover { transform: translateY(-2px); }
+.confirm-btn.danger { border: 0; color: #fff; background: linear-gradient(135deg, #ef4444, #b91c1c); box-shadow: 0 10px 24px rgba(239, 68, 68, 0.4); }
+.confirm-btn.danger:hover { transform: translateY(-2px); box-shadow: 0 14px 30px rgba(239, 68, 68, 0.55); }

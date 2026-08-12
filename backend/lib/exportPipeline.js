@@ -15,9 +15,39 @@ const FX_TYPES = new Set(['blur', 'solid', 'pixelate'])
  * Returns a cleaned copy: numbers coerced, boxes clamped to 0-100%,
  * ranges clamped to [0, duration], zero-length edits dropped.
  */
+/**
+ * Expand any edit carrying a `track` (per-keyframe boxes from the follow-tracker)
+ * into a series of short static box edits — one per keyframe interval — so the
+ * normal static-box ffmpeg pipeline renders a moving/tracked blur with no special
+ * casing. Non-tracked edits pass through unchanged. Dense tracks are downsampled.
+ */
+function expandTrackedEdits(rawEdits, maxSegmentsPerTrack = 150) {
+  if (!Array.isArray(rawEdits)) return rawEdits
+  const out = []
+  for (const e of rawEdits) {
+    if (!e || !Array.isArray(e.track) || e.track.length < 2) { out.push(e); continue }
+    let kf = e.track
+    if (kf.length > maxSegmentsPerTrack) {
+      const stride = Math.ceil(kf.length / maxSegmentsPerTrack)
+      kf = kf.filter((_, i) => i % stride === 0 || i === kf.length - 1)
+    }
+    for (let i = 0; i < kf.length; i++) {
+      if (!kf[i] || !kf[i].box) continue
+      const start = Number(kf[i].t)
+      const end = i < kf.length - 1 ? Number(kf[i + 1].t) : (Number(e.end) > start ? Number(e.end) : start + 0.2)
+      if (!(end > start)) continue
+      out.push({
+        action: e.action, start, end, box: kf[i].box,
+        fxType: e.fxType, fxIntensity: e.fxIntensity, customMediaId: e.customMediaId,
+      })
+    }
+  }
+  return out
+}
+
 function sanitizeEdits(rawEdits, duration) {
   if (!Array.isArray(rawEdits)) throw new Error('edits must be an array')
-  if (rawEdits.length > 500) throw new Error('too many edits (max 500)')
+  if (rawEdits.length > 4000) throw new Error('too many edits (max 4000)')
 
   const clampPct = (v) => Math.max(0, Math.min(100, Number(v) || 0))
   const edits = []
@@ -72,6 +102,7 @@ function sanitizeEdits(rawEdits, duration) {
  * @param {Map|object} opts.customFiles  id -> {path, isImage} for user media
  * @param {number} opts.duration    video duration in seconds (0 = unknown)
  * @param {boolean} opts.hasAudio   whether input has an audio stream
+ * @param {boolean} opts.hasVideo   whether input has a video stream (false = audio-only file)
  * @param {number} opts.width       video width in px
  * @param {number} opts.height      video height in px
  * @returns {{args: string[], reencodes: boolean}}
@@ -79,20 +110,22 @@ function sanitizeEdits(rawEdits, duration) {
 function buildExportArgs(opts) {
   const {
     inputPath, outputPath, edits,
-    duration = 0, hasAudio = true, width = 0, height = 0,
+    duration = 0, hasAudio = true, hasVideo = true, width = 0, height = 0,
+    subtitleFile = null, // basename of an .srt to burn in (spawn cwd = its dir)
   } = opts
   const customFiles = opts.customFiles instanceof Map
     ? opts.customFiles
     : new Map(Object.entries(opts.customFiles || {}))
 
-  const blurs = edits.filter(e => e.action === 'blur')
+  // audio-only sources can't carry visual fx — drop blurs there
+  const blurs = hasVideo ? edits.filter(e => e.action === 'blur') : []
   const bleeps = hasAudio ? edits.filter(e => e.action === 'bleep') : []
   const cuts = edits.filter(e => e.action === 'cut').sort((a, b) => a.start - b.start)
 
   const inputArgs = ['-i', inputPath]
   const graph = []
   let inputIndex = 1
-  let currentV = '0:v'
+  let currentV = hasVideo ? '0:v' : null
   let currentA = hasAudio ? '0:a' : null
 
   // ---- 1. visual fx (operate on the original timeline, before cuts) ----
@@ -138,10 +171,14 @@ function buildExportArgs(opts) {
 
   // ---- 2. audio bleeps + optional replacement sfx ----
   if (bleeps.length > 0) {
-    const padding = 0.2
+    // Whisper word timestamps tend to land tight around the vowel, so a small
+    // pad keeps the bleep from clipping the consonants and leaking the word.
+    // Lead is a touch wider than trail since the onset is the most recognizable.
+    const LEAD_PADDING = 0.3
+    const TRAIL_PADDING = 0.25
     bleeps.forEach((b, i) => {
-      const start = Math.max(0, b.start - padding).toFixed(3)
-      const end = (b.end + padding).toFixed(3)
+      const start = Math.max(0, b.start - LEAD_PADDING).toFixed(3)
+      const end = (b.end + TRAIL_PADDING).toFixed(3)
       const next = `mute${i}`
       graph.push(`[${currentA}]volume=0:enable='between(t,${start},${end})'[${next}]`)
       currentA = next
@@ -152,7 +189,7 @@ function buildExportArgs(opts) {
       const custom = b.customMediaId && customFiles.get(b.customMediaId)
       if (custom && !custom.isImage) {
         inputArgs.push('-i', custom.path)
-        const delayMs = Math.max(0, Math.floor((b.start - padding) * 1000))
+        const delayMs = Math.max(0, Math.floor((b.start - LEAD_PADDING) * 1000))
         graph.push(`[${inputIndex}:a]adelay=${delayMs}|${delayMs},apad[sfx${i}]`)
         mixInputs.push(`[sfx${i}]`)
         inputIndex++
@@ -178,22 +215,30 @@ function buildExportArgs(opts) {
 
     const segLabels = []
     if (keep.length > 1) {
-      graph.push(`[${currentV}]split=${keep.length}${keep.map((_, i) => `[vs${i}]`).join('')}`)
+      if (currentV) graph.push(`[${currentV}]split=${keep.length}${keep.map((_, i) => `[vs${i}]`).join('')}`)
       if (currentA) graph.push(`[${currentA}]asplit=${keep.length}${keep.map((_, i) => `[as${i}]`).join('')}`)
       keep.forEach((seg, i) => {
-        graph.push(`[vs${i}]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS[vseg${i}]`)
+        if (currentV) graph.push(`[vs${i}]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS[vseg${i}]`)
         if (currentA) graph.push(`[as${i}]atrim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},asetpts=PTS-STARTPTS[aseg${i}]`)
-        segLabels.push(currentA ? `[vseg${i}][aseg${i}]` : `[vseg${i}]`)
+        segLabels.push(`${currentV ? `[vseg${i}]` : ''}${currentA ? `[aseg${i}]` : ''}`)
       })
     } else {
       const seg = keep[0]
-      graph.push(`[${currentV}]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS[vseg0]`)
+      if (currentV) graph.push(`[${currentV}]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS[vseg0]`)
       if (currentA) graph.push(`[${currentA}]atrim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},asetpts=PTS-STARTPTS[aseg0]`)
-      segLabels.push(currentA ? '[vseg0][aseg0]' : '[vseg0]')
+      segLabels.push(`${currentV ? '[vseg0]' : ''}${currentA ? '[aseg0]' : ''}`)
     }
-    graph.push(`${segLabels.join('')}concat=n=${keep.length}:v=1:a=${currentA ? 1 : 0}[outv]${currentA ? '[outa]' : ''}`)
-    currentV = 'outv'
+    graph.push(`${segLabels.join('')}concat=n=${keep.length}:v=${currentV ? 1 : 0}:a=${currentA ? 1 : 0}${currentV ? '[outv]' : ''}${currentA ? '[outa]' : ''}`)
+    if (currentV) currentV = 'outv'
     if (currentA) currentA = 'outa'
+  }
+
+  // ---- 4. burn-in subtitles (last video step; .srt timed to the edited timeline) ----
+  // The file is referenced by basename and resolved against ffmpeg's cwd, which
+  // sidesteps Windows drive-letter (C:) escaping inside the subtitles filter.
+  if (subtitleFile && currentV) {
+    graph.push(`[${currentV}]subtitles=${subtitleFile}[vsub]`)
+    currentV = 'vsub'
   }
 
   // ---- assemble argv ----
@@ -201,11 +246,11 @@ function buildExportArgs(opts) {
   const args = ['-hide_banner', '-nostats', ...inputArgs]
   if (reencodes) args.push('-filter_complex', graph.join(';'))
 
-  args.push('-map', currentV.includes(':') ? currentV : `[${currentV}]`)
+  if (currentV) args.push('-map', currentV.includes(':') ? currentV : `[${currentV}]`)
   if (currentA) args.push('-map', currentA.includes(':') ? currentA : `[${currentA}]`)
 
   if (reencodes) {
-    args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p')
+    if (currentV) args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p')
     if (currentA) args.push('-c:a', 'aac', '-b:a', '192k')
   } else {
     args.push('-c', 'copy')
@@ -215,4 +260,4 @@ function buildExportArgs(opts) {
   return { args, reencodes }
 }
 
-module.exports = { sanitizeEdits, buildExportArgs }
+module.exports = { sanitizeEdits, buildExportArgs, expandTrackedEdits }

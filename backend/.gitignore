@@ -2,5 +2,6 @@ venv/
 .venv/
 uploads/
 outputs/
+user-data/
 __pycache__/
 node_modules/

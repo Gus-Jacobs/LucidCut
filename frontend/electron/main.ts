@@ -4,7 +4,58 @@ import { fork, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as http from 'http';
 
-const { app, BrowserWindow, Menu, ipcMain } = Electron;
+const { app, BrowserWindow, Menu, ipcMain, powerSaveBlocker, dialog, shell } = Electron;
+
+app.setName('LucidCut');
+
+// Auto-update: in production, check the release feed, download in the background,
+// and offer to restart when ready. Uses electron-updater (configured via the
+// "publish" field in package.json). Guarded so a missing dep never breaks startup.
+function setupAutoUpdate(): void {
+  if (!app.isPackaged) return; // only meaningful for installed builds
+  let autoUpdater: any;
+  try {
+    autoUpdater = require('electron-updater').autoUpdater;
+  } catch {
+    console.log('[updater] electron-updater not installed; skipping auto-update');
+    return;
+  }
+  autoUpdater.autoDownload = true;
+  autoUpdater.on('update-available', (info: any) => console.log(`[updater] update available: ${info?.version}`));
+  autoUpdater.on('update-not-available', () => console.log('[updater] up to date'));
+  autoUpdater.on('error', (err: any) => console.error('[updater]', err?.message || err));
+  autoUpdater.on('update-downloaded', async (info: any) => {
+    try {
+      const r = await dialog.showMessageBox({
+        type: 'info',
+        buttons: ['Restart now', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Update ready',
+        message: `LucidCut ${info?.version || ''} has been downloaded.`,
+        detail: 'Restart now to finish updating, or it will install automatically when you next close the app.',
+      });
+      if (r.response === 0) autoUpdater.quitAndInstall();
+    } catch (e) { /* will still install on quit */ }
+  });
+  autoUpdater.checkForUpdatesAndNotify().catch((e: any) => console.error('[updater]', e?.message || e));
+}
+
+// Prevent the system from sleeping/suspending during long parses.
+let powerBlockerId = -1;
+ipcMain.handle('lc-keep-awake', (_e, on: boolean) => {
+  try {
+    if (on) {
+      if (powerBlockerId === -1 || !powerSaveBlocker.isStarted(powerBlockerId)) {
+        powerBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+      }
+    } else if (powerBlockerId !== -1 && powerSaveBlocker.isStarted(powerBlockerId)) {
+      powerSaveBlocker.stop(powerBlockerId);
+      powerBlockerId = -1;
+    }
+  } catch (e) { /* non-fatal */ }
+  return true;
+});
 
 // CRITICAL FIX 1: Use app.isPackaged to reliably detect development mode
 const isDev = !app.isPackaged;
@@ -51,13 +102,25 @@ function startBackend(): Promise<void> {
       return reject(new Error('Backend file missing'));
     }
 
+    // bundled binaries live in resources/ in a packaged build
+    const res = process.resourcesPath;
+    const exe = process.platform === 'win32' ? '.exe' : '';
+    const packagedEnv = isDev ? {} : {
+      LUCIDCUT_WORKER_EXE: path.join(res, 'lucidcut-worker', `lucidcut-worker${exe}`),
+      LUCIDCUT_FFMPEG: path.join(res, 'bin', `ffmpeg${exe}`),
+      LUCIDCUT_FFPROBE: path.join(res, 'bin', `ffprobe${exe}`),
+    };
+
     backendProcess = fork(backendPath, [], {
       env: {
         ...process.env,
         NODE_ENV: isDev ? 'development' : 'production',
-        PORT: BACKEND_PORT.toString()
+        PORT: BACKEND_PORT.toString(),
+        // persistent, update-safe location for training data + personalized models
+        LUCIDCUT_DATA_DIR: path.join(app.getPath('userData'), 'lucidcut-data'),
+        ...packagedEnv,
       },
-      stdio: 'inherit' 
+      stdio: 'inherit'
     });
 
     backendProcess.on('error', (err) => {
@@ -78,16 +141,21 @@ function startBackend(): Promise<void> {
 
 // Create browser window
 async function createWindow(): Promise<void> {
+  const iconPath = isDev
+    ? path.join(app.getAppPath(), 'assets/logo.png')
+    : path.join(process.resourcesPath, 'assets/logo.png');
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1024,
     minHeight: 768,
+    title: 'LucidCut',
     webPreferences: {
-      nodeIntegration: true, 
-      contextIsolation: false 
+      nodeIntegration: true,
+      contextIsolation: false
     },
-    icon: isDev ? undefined : path.join(process.resourcesPath, 'assets/icon.png')
+    icon: iconPath
   });
 
   if (isDev) {
@@ -96,6 +164,18 @@ async function createWindow(): Promise<void> {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+
+  // Open external links (target="_blank", e.g. the Software Center & Stripe donate
+  // link) in the user's real browser instead of a blank Electron window.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  // Also catch same-window navigations to external sites.
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    const isLocal = url.startsWith('http://localhost') || url.startsWith('file://');
+    if (!isLocal && /^https?:\/\//i.test(url)) { e.preventDefault(); shell.openExternal(url); }
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -117,6 +197,7 @@ app.on('ready', async () => {
     await startBackend();
     await createWindow();
     createMenu();
+    setupAutoUpdate();
   } catch (err) {
     console.error('[Electron] Failed to start app:', err);
     if (!isDev) app.quit();

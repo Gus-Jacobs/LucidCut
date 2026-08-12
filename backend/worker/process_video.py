@@ -11,8 +11,9 @@ Pipeline:
   3. Cluster per-frame detections into scenes with merged region boxes + keyframe tracks
   4. Copy source video into outputs and write <output>.results.json
 
-All progress is reported on stdout as "[progress] N" / "[step-N] msg" lines that
-server.js parses. results.json is written even on failure (status: "error").
+All progress is reported on stdout as "[progress] N" / "[step] <label>" lines that
+server.js parses ([step] lines build the live checklist shown on the parsing
+screen). results.json is written even on failure (status: "error").
 """
 
 import os
@@ -26,6 +27,13 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import cv2
+
+# shared feature extractor (used by training + this worker's inference filter)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from features import extract_features_from_bgr
+except Exception:  # features module should always be present; degrade safely
+    extract_features_from_bgr = None
 
 # ==========================================
 # PROGRESS BAR INTERCEPTOR
@@ -57,10 +65,21 @@ def progress(pct: int):
 # ==========================================
 # CONFIG
 # ==========================================
+FFMPEG = os.environ.get("LUCIDCUT_FFMPEG", "ffmpeg")  # bundled binary in packaged builds
 FRAME_SAMPLE_RATE = 2          # frames analyzed per second of video
 SCENE_GAP_SECONDS = 3.0        # detections closer than this merge into one scene
 HARD_SEVERITY_SCORE = 0.70     # max confidence above this => "hard" (cut) severity
 CLASSIFIER_MODEL = "Falconsai/nsfw_image_detection"
+CROP_MAX_DIM = 256             # stored training crops are downscaled to this
+# frames whose 32x32 grayscale differs from the last analyzed frame by less than
+# this (mean abs diff, 0-1) are treated as the same shot: we reuse the previous
+# detection instead of re-running NudeNet. Speeds up static scenes with no accuracy
+# loss (a near-identical frame yields the same result).
+SCENE_DIFF_THRESHOLD = 0.04
+# personalized filter: drop a scene only when the user's model is this confident
+# it's a false positive (low probability of being a real detection)
+PERSONAL_SUPPRESS_THRESHOLD = 0.30
+PERSONAL_MIN_SAMPLES = 8       # per-class samples required before the filter activates
 
 DEFAULT_PROFANITY = [
     "damn", "hell", "crap", "piss",
@@ -240,7 +259,7 @@ class ProfanityDetector:
 def extract_audio(video_path: str, output_audio: str) -> bool:
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", "16000", output_audio],
+            [FFMPEG, "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", "16000", output_audio],
             check=True, capture_output=True)
         return True
     except subprocess.CalledProcessError as e:
@@ -248,16 +267,56 @@ def extract_audio(video_path: str, output_audio: str) -> bool:
         return False
 
 
-def transcribe_audio(audio_path: str) -> Optional[Dict]:
+def _transcribe_faster_whisper(audio_path: str) -> Optional[Dict]:
+    """faster-whisper (CTranslate2): same 'small' model + accuracy, ~4x faster on CPU.
+    Auto-uses the GPU when one is available. Returns an openai-whisper-shaped dict."""
+    from faster_whisper import WhisperModel
+    import torch  # noqa: just to detect CUDA
+    use_cuda = False
     try:
-        import whisper
+        use_cuda = torch.cuda.is_available()
+    except Exception:
+        use_cuda = False
+    device = "cuda" if use_cuda else "cpu"
+    compute_type = "float16" if use_cuda else "int8"
+    model = WhisperModel("small", device=device, compute_type=compute_type)
+    log(f"[transcribe] faster-whisper loaded (device={device}, {compute_type})")
+
+    segments_gen, info = model.transcribe(audio_path, word_timestamps=True, temperature=0.0)
+    seg_list, full_text = [], []
+    total = float(getattr(info, "duration", 0) or 0)
+    for s in segments_gen:  # streamed — iterate to drive progress
+        words = [{"word": w.word, "start": float(w.start or 0), "end": float(w.end or 0)}
+                 for w in (s.words or [])]
+        seg_list.append({"start": float(s.start or 0), "end": float(s.end or 0),
+                         "text": s.text or "", "words": words})
+        full_text.append(s.text or "")
+        if total > 0:
+            progress(10 + int(min(1.0, (s.end or 0) / total) * 40))
+    return {"text": "".join(full_text), "language": getattr(info, "language", None),
+            "segments": seg_list}
+
+
+def _transcribe_openai_whisper(audio_path: str) -> Optional[Dict]:
+    import whisper
+    model = whisper.load_model("small")
+    return model.transcribe(audio_path, language=None, verbose=False,
+                            word_timestamps=True, task="transcribe", temperature=0.0)
+
+
+def transcribe_audio(audio_path: str) -> Optional[Dict]:
+    # prefer faster-whisper (same accuracy, much faster); fall back to openai-whisper
+    try:
+        return _transcribe_faster_whisper(audio_path)
+    except ImportError:
+        log("[transcribe] faster-whisper not installed, using openai-whisper")
+    except Exception as e:
+        log(f"[transcribe] faster-whisper failed ({e}); falling back to openai-whisper")
+    try:
+        return _transcribe_openai_whisper(audio_path)
     except ImportError:
         log("[WARNING] whisper not available, skipping transcription")
         return None
-    try:
-        model = whisper.load_model("small")
-        return model.transcribe(audio_path, language=None, verbose=False,
-                                word_timestamps=True, task="transcribe", temperature=0.0)
     except Exception as e:
         log(f"[transcribe] failed: {e}")
         return None
@@ -307,6 +366,10 @@ def scan_imagery(video_path: str, imagery_cfg: Dict) -> Dict:
 
     frames = []
     frame_idx = 0
+    last_small = None       # 32x32 gray of the last analyzed frame
+    last_regions = []       # its detected regions (carried forward across near-identical frames)
+    last_crop = None
+    analyzed = skipped = 0
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -315,17 +378,65 @@ def scan_imagery(video_path: str, imagery_cfg: Dict) -> Dict:
             progress(55 + int((frame_idx / total_frames) * 35))
         if frame_idx % interval == 0:
             timestamp = frame_idx / fps if fps > 0 else 0.0
-            try:
-                regions = detector.predict(frame)
-            except Exception as e:
-                log(f"[nsfw] frame {frame_idx} failed: {e}")
-                regions = []
-            if regions:
-                frames.append({"timestamp": timestamp, "frame_idx": frame_idx, "regions": regions})
+            small = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (32, 32),
+                               interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+            similar = last_small is not None and float(np.mean(np.abs(small - last_small))) < SCENE_DIFF_THRESHOLD
+
+            if similar:
+                # same shot as the last analyzed frame — reuse its result (keeps scene
+                # coverage intact) instead of paying for another detector pass
+                skipped += 1
+                if last_regions:
+                    frames.append({"timestamp": timestamp, "frame_idx": frame_idx,
+                                   "regions": last_regions, "crop": last_crop})
+            else:
+                try:
+                    regions = detector.predict(frame)
+                except Exception as e:
+                    log(f"[nsfw] frame {frame_idx} failed: {e}")
+                    regions = []
+                analyzed += 1
+                last_small = small
+                last_regions = regions
+                last_crop = _crop_top_region(frame, regions) if regions else None
+                if regions:
+                    frames.append({"timestamp": timestamp, "frame_idx": frame_idx,
+                                   "regions": regions, "crop": last_crop})
         frame_idx += 1
 
     cap.release()
+    if analyzed or skipped:
+        pct = int(skipped / max(1, analyzed + skipped) * 100)
+        log(f"[nsfw] analyzed {analyzed} frames, skipped {skipped} near-identical ({pct}% saved)")
     return {"mode": mode, "frames": frames}
+
+
+def _downscale(img: np.ndarray) -> np.ndarray:
+    h, w = img.shape[:2]
+    scale = CROP_MAX_DIM / max(h, w) if max(h, w) > CROP_MAX_DIM else 1.0
+    if scale < 1.0:
+        img = cv2.resize(img, (max(1, int(w * scale)), max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
+    return img
+
+
+def _crop_top_region(frame_bgr: np.ndarray, regions: List[Dict]) -> Optional[np.ndarray]:
+    """Crop the highest-scoring region (percent box) from a frame, for training.
+    Falls back to the whole frame when a region carries no box (frame mode)."""
+    h, w = frame_bgr.shape[:2]
+    if h == 0 or w == 0 or not regions:
+        return None
+    top = max(regions, key=lambda r: r.get("score", 0.0))
+    box = top.get("box")
+    if not box:
+        return _downscale(frame_bgr.copy())
+    x = int(max(0, min(w - 1, box["x"] / 100.0 * w)))
+    y = int(max(0, min(h - 1, box["y"] / 100.0 * h)))
+    bw = int(max(1, min(w - x, box["w"] / 100.0 * w)))
+    bh = int(max(1, min(h - y, box["h"] / 100.0 * h)))
+    crop = frame_bgr[y:y + bh, x:x + bw]
+    if crop.size == 0:
+        return None
+    return _downscale(crop.copy())
 
 
 def _union_box(boxes: List[Dict]) -> Dict:
@@ -381,6 +492,14 @@ def _finalize_scene(scene_frames: List[Dict], mode: str) -> Dict:
         "regions": [],
     }
 
+    # representative crop = the highest-scoring frame's crop (used for training).
+    # stored under a private key and stripped before results.json is written.
+    best_frame = max(
+        scene_frames,
+        key=lambda f: max((r.get("score", 0.0) for r in f["regions"]), default=0.0),
+    )
+    scene["_crop"] = best_frame.get("crop")
+
     if mode != "region":
         return scene
 
@@ -407,6 +526,101 @@ def _finalize_scene(scene_frames: List[Dict], mode: str) -> Dict:
     if scene["regions"]:
         scene["bbox"] = _union_box([r["box"] for r in scene["regions"]])
     return scene
+
+
+# ==========================================
+# PERSONALIZED FALSE-POSITIVE FILTER
+# A scikit-learn model, trained from the user's Review-screen feedback, that
+# suppresses the detections this user keeps rejecting. Lives in DATA_DIR so app
+# updates never overwrite it. No-op until enough feedback has been collected.
+# ==========================================
+def load_personal_filter() -> Optional[Dict]:
+    data_dir = os.environ.get("LUCIDCUT_DATA_DIR")
+    if not data_dir or extract_features_from_bgr is None:
+        return None
+    model_path = os.path.join(data_dir, "models", "personal_filter.pkl")
+    meta_path = os.path.join(data_dir, "models", "meta.json")
+    if not os.path.exists(model_path):
+        return None
+    meta = {}
+    try:
+        if os.path.exists(meta_path):
+            with open(meta_path) as fh:
+                meta = json.load(fh)
+    except Exception:
+        meta = {}
+    # don't trust an undertrained model
+    if min(meta.get("positive", 0), meta.get("negative", 0)) < PERSONAL_MIN_SAMPLES:
+        return None
+    try:
+        import pickle
+        with open(model_path, "rb") as fh:
+            clf = pickle.load(fh)
+        classes = list(getattr(clf, "classes_", [0, 1]))
+        pos_idx = classes.index(1) if 1 in classes else len(classes) - 1
+        return {"clf": clf, "meta": meta, "pos_idx": pos_idx}
+    except Exception as e:
+        log(f"[filter] could not load personalized model: {e}")
+        return None
+
+
+def save_crops_and_filter(scenes: List[Dict], job_id: str, data_dir: str,
+                          pfilter: Optional[Dict]) -> List[Dict]:
+    """Apply the personalized filter (if any), then save each surviving scene's
+    representative crop to the pending training folder, keyed by the SAME id the
+    frontend builds (`unsafe-<idx>`) so review feedback can label it later."""
+    # 1. filter
+    kept = []
+    if pfilter is not None:
+        clf, pos_idx = pfilter["clf"], pfilter["pos_idx"]
+        removed = 0
+        for scene in scenes:
+            crop = scene.get("_crop")
+            feat = extract_features_from_bgr(crop) if crop is not None else None
+            if feat is not None:
+                try:
+                    proba_pos = float(clf.predict_proba([feat])[0][pos_idx])
+                    if proba_pos < PERSONAL_SUPPRESS_THRESHOLD:
+                        removed += 1
+                        continue
+                except Exception as e:
+                    log(f"[filter] prediction failed: {e}")
+            kept.append(scene)
+        if removed:
+            log(f"[filter] personalized filter removed {removed} likely false positive(s)")
+    else:
+        kept = list(scenes)
+
+    # 2. save crops for the survivors (final indices match frontend ids)
+    if data_dir and job_id:
+        pending = os.path.join(data_dir, "training", "pending", job_id)
+        try:
+            os.makedirs(pending, exist_ok=True)
+        except Exception as e:
+            log(f"[filter] could not create pending dir: {e}")
+            pending = None
+        if pending:
+            for idx, scene in enumerate(kept):
+                crop = scene.get("_crop")
+                if crop is None:
+                    continue
+                det_id = f"unsafe-{idx}"
+                try:
+                    cv2.imwrite(os.path.join(pending, f"{det_id}.jpg"), crop)
+                    meta = {
+                        "severity": scene.get("severity"),
+                        "max_confidence": scene.get("max_confidence"),
+                        "classes": [r.get("class") for r in scene.get("regions", [])],
+                    }
+                    with open(os.path.join(pending, f"{det_id}.json"), "w") as fh:
+                        json.dump(meta, fh)
+                except Exception as e:
+                    log(f"[filter] could not save crop {det_id}: {e}")
+
+    # 3. strip the private crop before serialization
+    for scene in kept:
+        scene.pop("_crop", None)
+    return kept
 
 
 # ==========================================
@@ -452,7 +666,7 @@ def process_video(input_path: str, output_path: str, raw_config: Dict) -> Dict:
     result = {
         "status": "processing", "input": input_path, "output": output_path,
         "config": cfg,
-        "transcript": None, "language": None,
+        "transcript": None, "language": None, "segments": [],
         "profanity_detections": [], "imagery_detections": [],
         "imagery_mode": "off",
         "statistics": {"profanity_count": 0, "imagery_count": 0},
@@ -463,52 +677,74 @@ def process_video(input_path: str, output_path: str, raw_config: Dict) -> Dict:
 
     # ---- 1. Speech / profanity ----
     if cfg["detectSwears"] and cfg["swearList"]:
-        log("[step-1] Extracting audio...")
+        log("[step] Extracting audio")
         audio_fd, temp_audio = tempfile.mkstemp(suffix=".wav", prefix="lucidcut_")
         os.close(audio_fd)
         try:
             if extract_audio(input_path, temp_audio):
                 progress(10)
-                log("[step-2] Transcribing audio...")
+                log("[step] Transcribing speech")
                 whisper_result = transcribe_audio(temp_audio)
                 if whisper_result:
                     result["transcript"] = whisper_result.get("text")
                     result["language"] = whisper_result.get("language")
-                    log("[step-3] Detecting profanity...")
+                    # keep segment + word timings so the editor can build subtitles
+                    result["segments"] = [
+                        {
+                            "start": float(s.get("start", 0.0)),
+                            "end": float(s.get("end", 0.0)),
+                            "text": (s.get("text") or "").strip(),
+                            "words": [
+                                {
+                                    "word": w.get("word", ""),
+                                    "start": float(w.get("start", 0.0)),
+                                    "end": float(w.get("end", 0.0)),
+                                }
+                                for w in (s.get("words") or [])
+                            ],
+                        }
+                        for s in whisper_result.get("segments", [])
+                    ]
+                    log("[step] Scanning for words")
                     progress(50)
                     detector = ProfanityDetector(cfg["swearList"], cfg["sensitivity"])
                     matches = detector.detect_from_whisper(whisper_result.get("segments", []))
                     result["profanity_detections"] = matches
                     result["statistics"]["profanity_count"] = len(matches)
             else:
-                log("[step-2] No audio track found, skipping transcription")
+                log("No audio track found, skipping transcription")
         finally:
             try:
                 os.remove(temp_audio)
             except OSError:
                 pass
-    else:
-        log("[step-1] Word detection disabled, skipping")
 
     progress(55)
 
     # ---- 2. Imagery (beta) ----
     if cfg["imagery"]["enabled"]:
-        log("[step-4] Scanning imagery (beta)...")
+        log("[step] Scanning imagery")
         scan = scan_imagery(input_path, cfg["imagery"])
         result["imagery_mode"] = scan["mode"]
         scenes = cluster_scenes(scan["frames"], scan["mode"])
+
+        # personalized false-positive filter + capture training crops
+        pfilter = load_personal_filter()
+        if pfilter is not None:
+            log("[step] Applying your personalized filter")
+        data_dir = os.environ.get("LUCIDCUT_DATA_DIR")
+        job_id = os.environ.get("LUCIDCUT_JOB_ID")
+        scenes = save_crops_and_filter(scenes, job_id, data_dir, pfilter)
+
         result["imagery_detections"] = scenes
         result["statistics"]["imagery_count"] = len(scenes)
-    else:
-        log("[step-4] Imagery detection disabled, skipping")
 
     progress(92)
 
-    # ---- 3. Stage source video into outputs ----
-    log("[step-5] Finalizing...")
+    # ---- 3. Stage source media into outputs ----
+    log("[step] Finalizing")
     try:
-        subprocess.run(["ffmpeg", "-y", "-i", input_path, "-c", "copy", output_path],
+        subprocess.run([FFMPEG, "-y", "-i", input_path, "-c", "copy", output_path],
                        check=True, capture_output=True)
     except subprocess.CalledProcessError as e:
         result["status"] = "error"

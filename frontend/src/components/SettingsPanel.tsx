@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { X } from 'lucide-react'
 import './SettingsPanel.css'
 
 export type ImageryConfig = {
@@ -17,6 +18,7 @@ interface Props {
   setSensitivity: (v: number) => void
   imagery: ImageryConfig
   setImagery: (v: ImageryConfig) => void
+  isAudio?: boolean
 }
 
 const CATEGORY_LABELS: Record<keyof ImageryConfig['categories'], { title: string; desc: string }> = {
@@ -27,7 +29,7 @@ const CATEGORY_LABELS: Record<keyof ImageryConfig['categories'], { title: string
 
 export default function SettingsPanel({
   detectSwears, setDetectSwears, swearList, setSwearList,
-  sensitivity, setSensitivity, imagery, setImagery,
+  sensitivity, setSensitivity, imagery, setImagery, isAudio = false,
 }: Props) {
   const [newSwear, setNewSwear] = useState('')
 
@@ -73,7 +75,7 @@ export default function SettingsPanel({
               <div className="keyword-list">
                 {swearList.map(word => (
                   <div key={word} className="keyword-item">
-                    {word} <button type="button" onClick={() => removeSwear(word)}>✕</button>
+                    {word} <button type="button" onClick={() => removeSwear(word)} style={{ display: 'inline-flex', alignItems: 'center' }}><X size={13} /></button>
                   </div>
                 ))}
                 {swearList.length === 0 && <span className="muted small">No target words defined.</span>}
@@ -85,7 +87,15 @@ export default function SettingsPanel({
 
       <hr className="divider" />
 
-      {/* IMAGE DETECTION (BETA) */}
+      {/* IMAGE DETECTION (BETA) — not applicable to audio-only sources */}
+      {isAudio ? (
+        <div className="settings-section">
+          <p className="beta-warning" style={{ marginTop: 0 }}>
+            🎵 Audio file detected — visual detection is disabled. LucidCut will scan
+            the track for words only.
+          </p>
+        </div>
+      ) : (
       <div className="settings-section">
         <label className="toggle-label">
           <input type="checkbox" checked={imagery.enabled} onChange={(e) => setImagery({ ...imagery, enabled: e.target.checked })} />
@@ -138,6 +148,7 @@ export default function SettingsPanel({
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }

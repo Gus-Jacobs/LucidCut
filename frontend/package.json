@@ -1,8 +1,28 @@
 {
   "name": "video-censor-app",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.1",
   "main": "dist/main.js",
+  "build": {
+    "appId": "com.pegumax.lucidcut",
+    "productName": "LucidCut",
+    "icon": "assets/logo.png",
+    "files": ["dist/**/*", "assets/**/*"],
+    "extraResources": [
+      { "from": "assets", "to": "assets" },
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": ["**/*", "!.venv/**", "!uploads/**", "!outputs/**", "!user-data/**", "!**/__pycache__/**", "!test/**", "!dist/**", "!build/**", "!bin/**", "!*.spec"]
+      },
+      { "from": "../backend/dist/lucidcut-worker", "to": "lucidcut-worker" },
+      { "from": "../backend/bin", "to": "bin" }
+    ], 
+    "win": { "target": "nsis" },
+    "mac": { "target": "dmg" },
+    "linux": { "target": "AppImage" },
+    "publish": [{ "provider": "github", "owner": "Gus-Jacobs", "repo": "LucidCut" }]
+  },
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "tsc -b && vite build && npm run build:electron",
@@ -18,6 +38,8 @@
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@mui/material": "^7.3.8",
+    "electron-updater": "^6.3.9",
+    "lucide-react": "^1.20.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.0"

@@ -1,16 +1,25 @@
 # Speech-to-text
 openai-whisper==20250625
+# faster-whisper (CTranslate2): same models/accuracy, ~4x faster on CPU, auto-GPU.
+# Used preferentially; the worker falls back to openai-whisper if it's missing.
+faster-whisper>=1.0.0
 
 # NSFW region detection (beta) — per-body-part bounding boxes
 nudenet==3.4.2
-onnxruntime==1.19.2
+onnxruntime>=1.20.0          # 1.19.2 has no cp313 wheel; 1.20.0 is the first
 
 # Whole-frame NSFW classifier fallback
 transformers==4.57.6
 torch==2.8.0
 torchvision==0.23.0
 
-# Image / video frame handling
-opencv-python==4.13.0.92
+# Image / video frame handling.
+# opencv-contrib-python (superset of opencv-python) adds the object trackers
+# (CSRT/KCF) used by the editor's click-to-follow blur. Do NOT also install
+# opencv-python — they conflict; contrib includes everything.
+opencv-contrib-python==4.13.0.92
 Pillow==11.3.0
-numpy==2.0.2
+numpy>=2.1,<2.3              # 2.0.2 has no cp313 wheel; numba (whisper) caps <2.3
+
+# Per-user personalized false-positive filter (learns from review feedback)
+scikit-learn>=1.4

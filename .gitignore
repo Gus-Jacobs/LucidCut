@@ -1,0 +1,33 @@
+# Claude / local tooling — never push
+.claude/
+
+# dependencies
+node_modules/
+**/node_modules/
+
+# python env + caches
+.venv/
+**/__pycache__/
+*.pyc
+
+# build output
+frontend/dist/
+frontend/dist-electron/
+frontend/release/
+backend/dist/
+backend/build/
+*.spec
+
+# bundled binaries (large; fetched/placed at build time, not committed)
+backend/bin/
+
+# runtime / generated data
+backend/uploads/
+backend/outputs/
+backend/user-data/
+
+# os / editor
+.DS_Store
+Thumbs.db
+*.log
+.env

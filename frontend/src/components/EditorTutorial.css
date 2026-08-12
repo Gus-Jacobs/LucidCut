@@ -1,0 +1,128 @@
+.tour-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none; /* let clicks fall through to the app except on real elements below */
+  animation: tour-fade 180ms ease;
+}
+@keyframes tour-fade { from { opacity: 0 } to { opacity: 1 } }
+
+/* click blocker so users follow the tour (positioned via inline styles —
+   either full-screen, or four rects leaving an interactive hole on demo steps) */
+.tour-blocker { position: fixed; z-index: 1; pointer-events: auto; }
+
+/* dim layer used when a step has no anchor (welcome) */
+.tour-dim { position: fixed; inset: 0; background: rgba(3, 7, 18, 0.72); z-index: 2; pointer-events: auto; }
+
+/* the highlight cutout: a transparent box with a giant shadow = dim everything else */
+.tour-spotlight {
+  position: fixed;
+  z-index: 2;
+  border-radius: 10px;
+  border: 2px solid #8b5cf6;
+  box-shadow: 0 0 0 9999px rgba(3, 7, 18, 0.72), 0 0 22px 4px rgba(139, 92, 246, 0.6);
+  pointer-events: none;
+  transition: all 260ms cubic-bezier(0.23, 1, 0.32, 1);
+  animation: tour-pulse 1800ms ease-in-out infinite;
+}
+@keyframes tour-pulse {
+  0%, 100% { box-shadow: 0 0 0 9999px rgba(3, 7, 18, 0.72), 0 0 18px 2px rgba(139, 92, 246, 0.45); }
+  50%      { box-shadow: 0 0 0 9999px rgba(3, 7, 18, 0.72), 0 0 28px 7px rgba(139, 92, 246, 0.75); }
+}
+
+/* the coach-mark tooltip */
+.tour-tip {
+  position: fixed;
+  z-index: 3;
+  pointer-events: auto;
+  box-sizing: border-box;
+  overflow-y: auto; /* if the content is taller than the viewport, scroll instead of clipping */
+  padding: 16px 16px 14px;
+  border-radius: 14px;
+  color: #e6eef8;
+  background: linear-gradient(160deg, #161a38 0%, #0c1024 100%);
+  border: 1px solid rgba(124, 58, 237, 0.35);
+  box-shadow: 0 22px 60px rgba(3, 7, 18, 0.7);
+  animation: tour-pop 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@keyframes tour-pop { from { opacity: 0; transform: translateY(8px) } to { opacity: 1 } }
+/* keep the centered welcome card centered through the pop animation */
+.tour-tip[style*="translate"] { animation: none; }
+
+.tour-close {
+  position: absolute; top: 10px; right: 10px;
+  width: 28px; height: 28px; padding: 0; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 8px; background: rgba(255,255,255,0.05); color: #9fb0cc; cursor: pointer;
+}
+.tour-close:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+.tour-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 10px; padding-right: 26px; }
+.tour-ic {
+  flex-shrink: 0;
+  width: 40px; height: 40px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 11px; color: #fff;
+  background: linear-gradient(135deg, #7c3aed, #3b82f6);
+  box-shadow: 0 8px 18px rgba(124, 58, 237, 0.4);
+}
+.tour-count { font-size: 10.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #8ea2c4; margin-bottom: 2px; }
+.tour-title { margin: 0; font-size: 16px; font-weight: 800; color: #f1f8ff; line-height: 1.2; }
+
+.tour-body { margin: 0 0 12px; font-size: 13.5px; line-height: 1.6; color: #b9c6de; }
+.tour-body strong { color: #f1f8ff; }
+.tour-body em { color: #cdb4ff; font-style: normal; font-weight: 700; }
+
+/* Illustrative mockup widgets inside a tooltip */
+.tour-widget {
+  margin: 0 0 12px; padding: 9px; border-radius: 9px;
+  background: rgba(0,0,0,0.28); border: 1px solid var(--nle-border, #2e323a);
+}
+/* queue tabs mockup */
+.tw-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.tw-tab {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 8px; border-radius: 7px; font-size: 11px; font-weight: 600;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: #b9c6de;
+}
+.tw-tab.active { background: rgba(124,58,237,0.2); border-color: rgba(124,58,237,0.5); color: #f1f8ff; }
+.tw-tab.new { border-style: dashed; color: #9dd9ff; }
+.tw-tab b { color: #8b5cf6; }
+.tw-tab .ok { color: #34d399; }
+/* fx-box toolbar mockup */
+.tw-fxbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tw-fxbar .tw-num {
+  display: inline-flex; flex-direction: column; align-items: flex-start;
+  font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #8ea2c4;
+}
+.tw-fxbar .tw-num i { font-style: normal; font-size: 11px; color: #e6eef8; background: #1c1f26; border: 1px solid #3a3f4a; border-radius: 5px; padding: 1px 6px; margin-top: 2px; }
+.tw-fxbar .tw-sel { font-size: 10.5px; font-weight: 600; color: #e6eef8; background: #1c1f26; border: 1px solid #3a3f4a; border-radius: 5px; padding: 4px 7px; }
+.tw-fxbar .tw-range { width: 46px; height: 5px; border-radius: 3px; background: #3a3f4a; position: relative; }
+.tw-fxbar .tw-range i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: #8b5cf6; }
+.tw-fxbar .tw-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700; color: #fff; border-radius: 5px; padding: 4px 8px; }
+.tw-fxbar .tw-btn.track { background: #0d9488; }
+.tw-fxbar .tw-btn.learn { background: #7c3aed; }
+
+.tour-dots { display: flex; gap: 6px; justify-content: center; margin: 0 0 12px; }
+.tour-dot { width: 7px; height: 7px; border-radius: 999px; background: rgba(255,255,255,0.18); cursor: pointer; transition: all 200ms ease; }
+.tour-dot.on { background: linear-gradient(135deg, #7c3aed, #3b82f6); transform: scale(1.3); }
+
+.tour-actions {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  /* pinned to the bottom of the tooltip so Back/Next are always visible, even if
+     a tall step makes the tooltip scroll */
+  position: sticky; bottom: -14px;
+  margin: 0 -16px -14px; padding: 12px 16px 14px;
+  background: #0c1024; border-top: 1px solid rgba(255,255,255,0.06);
+}
+.tour-nav { display: flex; gap: 8px; }
+.tour-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 8px 14px; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer;
+  transition: all 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.tour-btn.ghost { background: transparent; border: 1px solid rgba(159, 176, 204, 0.3); color: #cdd8ec; }
+.tour-btn.ghost:hover:not(:disabled) { background: rgba(255,255,255,0.05); border-color: rgba(159,176,204,0.5); }
+.tour-btn.ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+.tour-btn.primary { border: 0; color: #fff; background: linear-gradient(135deg, #7c3aed, #3b82f6); box-shadow: 0 8px 18px rgba(124,58,237,0.4); }
+.tour-btn.primary:hover { transform: translateY(-1px); box-shadow: 0 12px 26px rgba(124,58,237,0.55); }
