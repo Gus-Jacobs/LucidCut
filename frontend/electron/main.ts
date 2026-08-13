@@ -1,10 +1,10 @@
 import * as Electron from 'electron';
 import * as path from 'path';
-import { fork, ChildProcess } from 'child_process';
+import { fork, execFile, execFileSync, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as http from 'http';
 
-const { app, BrowserWindow, Menu, ipcMain, powerSaveBlocker, dialog, shell } = Electron;
+const { app, BrowserWindow, Menu, ipcMain, powerSaveBlocker, dialog, shell, Notification } = Electron;
 
 app.setName('LucidCut');
 
@@ -21,10 +21,26 @@ function setupAutoUpdate(): void {
     return;
   }
   autoUpdater.autoDownload = true;
-  autoUpdater.on('update-available', (info: any) => console.log(`[updater] update available: ${info?.version}`));
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', (info: any) => {
+    console.log(`[updater] update available: ${info?.version}`);
+    try { if (Notification.isSupported()) new Notification({ title: 'LucidCut update found', body: `Downloading version ${info?.version || ''}…` }).show() } catch { /* non-fatal */ }
+    if (mainWindow) mainWindow.setProgressBar(0)
+  });
   autoUpdater.on('update-not-available', () => console.log('[updater] up to date'));
-  autoUpdater.on('error', (err: any) => console.error('[updater]', err?.message || err));
+  autoUpdater.on('error', (err: any) => {
+    console.error('[updater]', err?.message || err)
+    if (mainWindow) mainWindow.setProgressBar(-1)
+  });
+  // makes the download visible in the taskbar icon instead of happening
+  // invisibly in the background, per repeated user reports of it "hiding"
+  autoUpdater.on('download-progress', (p: any) => {
+    if (mainWindow) mainWindow.setProgressBar((p?.percent || 0) / 100)
+  });
   autoUpdater.on('update-downloaded', async (info: any) => {
+    if (mainWindow) mainWindow.setProgressBar(-1)
+    try { if (Notification.isSupported()) new Notification({ title: 'LucidCut update ready', body: `Version ${info?.version || ''} downloaded.` }).show() } catch { /* non-fatal */ }
     try {
       const r = await dialog.showMessageBox({
         type: 'info',
@@ -37,6 +53,13 @@ function setupAutoUpdate(): void {
       });
       if (r.response === 0) autoUpdater.quitAndInstall();
     } catch (e) { /* will still install on quit */ }
+  });
+  // fires right before the app quits to run the installer, whether triggered by
+  // quitAndInstall() above or by autoInstallOnAppQuit closing the app normally.
+  // Without this, an orphaned ffmpeg/worker process can still be holding a
+  // lock on a file the installer needs to overwrite, corrupting the update.
+  autoUpdater.on('before-quit-for-update', async () => {
+    await killBackendTree()
   });
   autoUpdater.checkForUpdatesAndNotify().catch((e: any) => console.error('[updater]', e?.message || e));
 }
@@ -63,6 +86,25 @@ const isDev = !app.isPackaged;
 let mainWindow: InstanceType<typeof BrowserWindow> | null = null;
 let backendProcess: ChildProcess | null = null;
 const BACKEND_PORT = 4000;
+
+// backendProcess.kill() only signals the direct child — it does NOT touch the
+// ffmpeg/ffprobe/worker processes that server.js spawns underneath it, which
+// then linger and hold file locks. That silently breaks the auto-updater's
+// quit-time install (Windows can't overwrite a locked ffmpeg.exe/worker.exe),
+// so the whole tree needs to go down before we let anything quit or update.
+function killBackendTree(): Promise<void> {
+  return new Promise((resolve) => {
+    const proc = backendProcess
+    backendProcess = null
+    if (!proc || !proc.pid) return resolve()
+    if (process.platform === 'win32') {
+      execFile('taskkill', ['/pid', String(proc.pid), '/t', '/f'], () => resolve())
+    } else {
+      try { process.kill(-proc.pid, 'SIGKILL') } catch { try { proc.kill('SIGKILL') } catch { /* already gone */ } }
+      resolve()
+    }
+  })
+}
 
 // Detect which port Vite is running on
 async function detectVitePort(): Promise<number> {
@@ -120,7 +162,10 @@ function startBackend(): Promise<void> {
         LUCIDCUT_DATA_DIR: path.join(app.getPath('userData'), 'lucidcut-data'),
         ...packagedEnv,
       },
-      stdio: 'inherit'
+      stdio: 'inherit',
+      // lets killBackendTree() reach ffmpeg/worker grandchildren via process
+      // group kill on mac/Linux; Windows cleanup instead uses taskkill /t
+      detached: process.platform !== 'win32',
     });
 
     backendProcess.on('error', (err) => {
@@ -205,13 +250,9 @@ app.on('ready', async () => {
 });
 
 app.on('window-all-closed', () => {
-  if (backendProcess) {
-    backendProcess.kill();
-    backendProcess = null;
-  }
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  killBackendTree().finally(() => {
+    if (process.platform !== 'darwin') app.quit();
+  });
 });
 
 app.on('activate', () => {
@@ -220,6 +261,12 @@ app.on('activate', () => {
   }
 });
 
+// last-resort synchronous backstop for exit paths that skip window-all-closed
+// (e.g. a crash) — 'exit' can't await, so this only covers the direct child.
 process.on('exit', () => {
-  if (backendProcess) backendProcess.kill();
+  if (!backendProcess || !backendProcess.pid) return;
+  try {
+    if (process.platform === 'win32') execFileSync('taskkill', ['/pid', String(backendProcess.pid), '/t', '/f']);
+    else backendProcess.kill('SIGKILL');
+  } catch { /* already gone */ }
 });

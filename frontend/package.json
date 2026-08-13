@@ -1,5 +1,5 @@
 {
-  "name": "video-censor-app",
+  "name": "lucidcut",
   "private": true,
   "version": "1.0.1",
   "main": "dist/main.js",
