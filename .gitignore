@@ -18,7 +18,15 @@ backend/dist/
 backend/build/
 *.spec
 
-# bundled binaries (large; fetched/placed at build time, not committed)
+# bundled binaries (large; fetched/placed at build time, not committed).
+# MUST be a STATIC ffmpeg/ffprobe build (e.g. gyan.dev's "essentials"/"full"
+# build, --enable-static) with zero external DLL dependencies. A shared build
+# (ffmpeg.exe/ffprobe.exe dynamically linked against separate avcodec/avutil
+# DLLs we don't also bundle) launches fine on a dev machine that happens to
+# have some other ffmpeg install on PATH, then fails on a clean end-user
+# machine with STATUS_DLL_NOT_FOUND (0xC0000135) — silent to us, "this file
+# could not be read" to the user. Verify with a PATH stripped to just
+# C:\Windows\System32 before shipping a replacement.
 backend/bin/
 
 # runtime / generated data
