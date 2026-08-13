@@ -4,9 +4,13 @@ import { fork, execFile, execFileSync, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as http from 'http';
 
-const { app, BrowserWindow, Menu, ipcMain, powerSaveBlocker, dialog, shell, Notification } = Electron;
+const { app, BrowserWindow, Menu, ipcMain, powerSaveBlocker, dialog, shell } = Electron;
 
 app.setName('LucidCut');
+// Without this, Windows toast notifications (and taskbar grouping) fall back to
+// a generic/default identity instead of showing "LucidCut" — must match the
+// AUMID the NSIS installer registers, which electron-builder derives from appId.
+if (process.platform === 'win32') app.setAppUserModelId('com.pegumax.lucidcut');
 
 // Auto-update: in production, check the release feed, download in the background,
 // and offer to restart when ready. Uses electron-updater (configured via the
@@ -23,9 +27,11 @@ function setupAutoUpdate(): void {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
+  // Deliberately just ONE user-facing prompt in this whole flow (the dialog
+  // below) — the taskbar progress bar is the only other signal. Multiple
+  // toasts stacking up on top of that dialog was confusing, not helpful.
   autoUpdater.on('update-available', (info: any) => {
     console.log(`[updater] update available: ${info?.version}`);
-    try { if (Notification.isSupported()) new Notification({ title: 'LucidCut update found', body: `Downloading version ${info?.version || ''}…` }).show() } catch { /* non-fatal */ }
     if (mainWindow) mainWindow.setProgressBar(0)
   });
   autoUpdater.on('update-not-available', () => console.log('[updater] up to date'));
@@ -33,14 +39,11 @@ function setupAutoUpdate(): void {
     console.error('[updater]', err?.message || err)
     if (mainWindow) mainWindow.setProgressBar(-1)
   });
-  // makes the download visible in the taskbar icon instead of happening
-  // invisibly in the background, per repeated user reports of it "hiding"
   autoUpdater.on('download-progress', (p: any) => {
     if (mainWindow) mainWindow.setProgressBar((p?.percent || 0) / 100)
   });
   autoUpdater.on('update-downloaded', async (info: any) => {
     if (mainWindow) mainWindow.setProgressBar(-1)
-    try { if (Notification.isSupported()) new Notification({ title: 'LucidCut update ready', body: `Version ${info?.version || ''} downloaded.` }).show() } catch { /* non-fatal */ }
     try {
       const r = await dialog.showMessageBox({
         type: 'info',
@@ -61,7 +64,9 @@ function setupAutoUpdate(): void {
   autoUpdater.on('before-quit-for-update', async () => {
     await killBackendTree()
   });
-  autoUpdater.checkForUpdatesAndNotify().catch((e: any) => console.error('[updater]', e?.message || e));
+  // (not checkForUpdatesAndNotify) — that variant fires its own extra native
+  // notification we don't control the copy/branding of, on top of ours above.
+  autoUpdater.checkForUpdates().catch((e: any) => console.error('[updater]', e?.message || e));
 }
 
 // Prevent the system from sleeping/suspending during long parses.
@@ -232,7 +237,10 @@ function createMenu(): void {
   const template: any[] = [
     { label: 'File', submenu: [ isMac ? { role: 'close' } : { role: 'quit' } ] },
     { label: 'Edit', submenu: [ { role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' } ] },
-    { label: 'View', submenu: [ { role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' } ] }
+    { label: 'View', submenu: [ { role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' } ] },
+    { label: 'Help', submenu: [
+      { label: 'Open Logs Folder', click: () => { shell.openPath(path.join(app.getPath('userData'), 'lucidcut-data', 'logs')); } },
+    ] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }

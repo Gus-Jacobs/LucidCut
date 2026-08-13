@@ -11,6 +11,7 @@ const cors = require('cors')
 
 const { sanitizeEdits, buildExportArgs, expandTrackedEdits } = require('./lib/exportPipeline')
 const { probeVideo } = require('./lib/probe')
+const { log } = require('./lib/log')
 
 const app = express()
 app.use(cors())
@@ -44,6 +45,15 @@ const TRACK_SCRIPT = path.join(__dirname, 'worker', 'track_object.py')
 const WORKER_EXE = process.env.LUCIDCUT_WORKER_EXE || null
 const FFMPEG = process.env.LUCIDCUT_FFMPEG || 'ffmpeg'
 const FFPROBE = process.env.LUCIDCUT_FFPROBE || 'ffprobe'
+
+// One-time boot diagnostic: which binaries we resolved to and whether they're
+// actually sitting on disk. In dev these paths are bare command names (resolved
+// via PATH at spawn time, not a real path), so existsSync on them is expected
+// to read false there — it's only meaningful for packaged builds.
+log(`boot: platform=${process.platform} packaged=${!!process.env.LUCIDCUT_WORKER_EXE}`)
+log(`boot: ffmpeg=${FFMPEG} exists=${fs.existsSync(FFMPEG)}`)
+log(`boot: ffprobe=${FFPROBE} exists=${fs.existsSync(FFPROBE)}`)
+log(`boot: workerExe=${WORKER_EXE || '(none — using python)'} exists=${WORKER_EXE ? fs.existsSync(WORKER_EXE) : 'n/a'}`)
 
 // Spawn a worker task either via the frozen exe (packaged) or python+script (dev).
 function spawnWorker(kind, args, opts) {
@@ -354,6 +364,7 @@ function startWorker(job) {
   py.stdout.on('data', handleOutput)
   py.stderr.on('data', handleOutput)
   py.on('error', (e) => {
+    log(`worker spawn failed for job ${job.id}: ${e.message} | code=${e.code || 'n/a'} | workerExe=${WORKER_EXE || '(python)'}`)
     clearInterval(progressInterval)
     finishJob(job, 1, `worker process error: ${e.message}`)
   })
@@ -446,6 +457,9 @@ app.post('/api/upload', videoUpload.single('video'), async (req, res) => {
   try {
     probe = await probeVideo(req.file.path)
   } catch (e) {
+    // the user-facing message stays generic (no internal paths/binary names);
+    // the real reason goes to the log file so a support case is diagnosable.
+    log(`upload probe failed for "${req.file.originalname}" (${req.file.size} bytes): ${e.message}`)
     dropInput()
     return res.status(400).json({ error: 'This file could not be read — it may be corrupted or still transferring. Please re-select it and try again.' })
   }
@@ -859,6 +873,7 @@ app.post('/api/jobs/:id/export', mediaUpload.any(), async (req, res) => {
     stderrTail = (stderrTail + d.toString()).slice(-2000)
   })
   ffmpeg.on('error', (e) => {
+    log(`export ffmpeg spawn failed for job ${job.id}: ${e.message} | code=${e.code || 'n/a'} | ffmpeg=${FFMPEG}`)
     job.export = { ...job.export, status: 'failed', error: `ffmpeg not available: ${e.message}` }
     dropUploads()
     dropSubs()
